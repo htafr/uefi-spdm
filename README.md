@@ -5,7 +5,7 @@ between PCI devices and the firmware driver.
 
 This repo implements work from other repos[^1] [^2] [^3] with personal modifications.
 
-# Personal modifications
+# Personal Modifications
 
 ### QEMU
 QEMU compiles the LibSPDM in-tree (see `./configure --help`) and there are two files that 
@@ -61,6 +61,12 @@ Copy files `target.txt` and `tools_def.txt`. The latter is needed only if the en
 cp files/target.txt files/tools_def.txt edk2/Conf
 ```
 
+Source the script available at the repo path to configure environment variables.
+
+```bash
+source set-env.sh
+```
+
 Run the Makefile commands.
 
 ```bash
@@ -76,7 +82,12 @@ The Makefile has three running rules: **x64-run**, **x64-dbg** and **x64-log**.
 2. **x64-dbg**: attach qemu to gdb
 3. **x64-log**: persist qemu output to logs/log-x64.txt
 
+# Certificates
+
+The rsa2048 was generated using libspdm[^4] certificate generator script.
+
 [^1]: [DeviceSecurity Branch at edk2-staging](https://github.com/tianocore/edk2-staging/blob/DeviceSecurity/DeviceSecurityTestPkg/readme.md)
 [^2]: [PCI DOE initial support for EDK2 PR#5715 (still not approved in 18/10/2024)](https://github.com/tianocore/edk2/pull/5715)
 [^3]: [NVMe and PCI DOE implementation in QEMU](https://github.com/twilfredo/qemu-spdm-emulation-guide)
+[^4]: [auto\_gen\_cert.sh](https://github.com/DMTF/libspdm/blob/a6ce1c966657f96bf3b4a6af08037abd9d00b306/unit_test/sample_key/auto_gen_cert.sh)
 
