@@ -17,8 +17,7 @@
 #                                               build. This line is required if and only if the current
 #                                               working directory does not contain one or more description
 #                                               files.
-#ACTIVE_PLATFORM       = edk2/OvmfPkg/RiscVVirt/RiscVVirtQemu.dsc
-ACTIVE_PLATFORM       = edk2/OvmfPkg/OvmfPkgX64.dsc
+ACTIVE_PLATFORM       = OvmfPkg/OvmfPkgX64.dsc
 
 #  TARGET                List       Optional    Zero or more of the following: DEBUG, RELEASE, NOOPT
 #                                               UserDefined; separated by a space character.
