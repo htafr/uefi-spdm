@@ -1,6 +1,6 @@
 [submodule "edk2"]
 	path = edk2
-	url = ./edk2
+	url = https://github.com/htafr/edk2.git
 [submodule "qemu"]
 	path = qemu
-	url = ./qemu
+	url = https://github.com/htafr/qemu.git
