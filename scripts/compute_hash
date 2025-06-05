@@ -1,0 +1,46 @@
+#!/bin/python3
+
+import os
+import hashlib
+import argparse
+
+parser = argparse.ArgumentParser(
+            prog="compute_hash",
+            description="Compute firmware hash (SHA256)")
+parser.add_argument("-m", "--modify",
+                    action="store_true",
+                    help="Modify the first byte of the hash to 0xAF")
+args = parser.parse_args()
+
+workdir = os.getenv("WORKSPACE")
+f_vars = open(f"{workdir}/Build/OvmfX64/DEBUG_GCC5/FV/OVMF_VARS.fd", "rb")
+f_code = open(f"{workdir}/Build/OvmfX64/DEBUG_GCC5/FV/OVMF_CODE.fd", "rb")
+f_new = open(f"{workdir}/Build/OvmfX64/DEBUG_GCC5/FV/OVMF_VARS_INTEGRITY.fd", "w+b")
+
+bios_hash = hashlib.sha256()
+bios_hash.update(f_vars.read())
+bios_hash.update(f_code.read())
+print("BIOS hash:", end="\n\t")
+print(bios_hash.hexdigest())
+
+data = bytearray(len(bios_hash.digest()))
+data[-1] = 4
+data += bios_hash.digest()
+pcr_hash = hashlib.sha256()
+pcr_hash.update(data)
+print("PCR 0:", end="\n\t")
+print(pcr_hash.hexdigest())
+
+f_vars.seek(0)
+f_new.write(f_vars.read())
+f_new.seek(0x42000)
+f_new.write(pcr_hash.digest())
+
+# This modifies the firmware for test purposes
+if args.modify:
+    f_new.seek(0x42000)
+    f_new.write(b'\xaf')
+
+f_vars.close()
+f_code.close()
+f_new.close()
