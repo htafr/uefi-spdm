@@ -3,13 +3,13 @@
 
 REPO ?= $(shell pwd)
 
-ifeq ($(shell uname -m), "arm64")
+ifeq ($(shell uname -m), arm64)
 TOOLCHAIN ?= AARCH64_GCC
 GCC5_X64_PREFIX ?= x86_64-linux-gnu-
-else ifeq ($(shell uname -m), "aarch64")
+else ifeq ($(shell uname -m), aarch64)
 TOOLCHAIN ?= AARCH64_GCC
 GCC5_X64_PREFIX ?= x86_64-linux-gnu-
-else ifeq ($(shell uname -m), "x86_64")
+else ifeq ($(shell uname -m), x86_64)
 TOOLCHAIN ?= GCC
 GCC5_X64_PREFIX ?= 
 endif
@@ -96,14 +96,19 @@ qemu: qemu-config
 .PHONY: edk2
 edk2:
 	@export WORKSPACE=${REPO}/edk2
-	@export GCC5_X64_PREFIX=${GCC5_X64_PREFIX}
+	@export GCC5_BIN=${GCC5_X64_PREFIX}
 	@source ${REPO}/edk2/edksetup.sh
 	@cd ${REPO}/edk2
 	@build -p OvmfPkg/OvmfPkgX64.dsc -t GCC5 -a X64 -b DEBUG -Y COMPILE_INFO -y ${REPO}/logs/OvmfPkgX64.log
-	$(PYTHON) ${REPO}/scripts/compute_hash
 
 .PHONY: run
 run: tpm
+	$(PYTHON) ${REPO}/scripts/compute_hash -w ${REPO}/edk2
+	$(QEMUX64) $(QFLAGSX64)
+
+.PHONY: integrity
+integrity: tpm
+	$(PYTHON) ${REPO}/scripts/compute_hash -w ${REPO}/edk2 -m
 	$(QEMUX64) $(QFLAGSX64)
 
 .PHONY: tpm
