@@ -11,7 +11,7 @@ TOOLCHAIN ?= AARCH64_GCC
 GCC5_X64_PREFIX ?= x86_64-linux-gnu-
 else ifeq ($(shell uname -m), x86_64)
 TOOLCHAIN ?= GCC
-GCC5_X64_PREFIX ?= 
+GCC5_X64_PREFIX ?= gcc
 endif
 
 MKDIR = @mkdir -p
