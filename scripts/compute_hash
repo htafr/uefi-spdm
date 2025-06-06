@@ -10,9 +10,13 @@ parser = argparse.ArgumentParser(
 parser.add_argument("-m", "--modify",
                     action="store_true",
                     help="Modify the first byte of the hash to 0xAF")
+parser.add_argument("-w", "--workspace",
+                    action="store",
+                    help="Base directory of EDK2 firmware",
+                    required=True)
 args = parser.parse_args()
 
-workdir = os.getenv("WORKSPACE")
+workdir = args.workspace
 f_vars = open(f"{workdir}/Build/OvmfX64/DEBUG_GCC5/FV/OVMF_VARS.fd", "rb")
 f_code = open(f"{workdir}/Build/OvmfX64/DEBUG_GCC5/FV/OVMF_CODE.fd", "rb")
 f_new = open(f"{workdir}/Build/OvmfX64/DEBUG_GCC5/FV/OVMF_VARS_INTEGRITY.fd", "w+b")
