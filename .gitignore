@@ -1,3 +1,4 @@
 Build/
-logs/*
-*.img
+build/
+logs/
+images/
