@@ -75,6 +75,7 @@ help:
 	@echo "    qemu-config   configure qemu"
 	@echo "    edk2          build OVMF firmware"
 	@echo "    run           run emulation"
+	@echo "    integrity     run emulation with wrong supplied firmware hash"
 	@echo "    tpm           run TPM emulation"
 	@echo "    dirs          create logs/, qemu/build/, and /tmp/tpm/"
 	@echo 
