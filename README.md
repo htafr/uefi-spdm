@@ -5,15 +5,10 @@ between PCI devices and the firmware driver.
 
 This repo implements work from other repos[^1] [^2] [^3] with personal modifications.
 
-# Personal Modifications
-
 ### QEMU
-QEMU compiles the LibSPDM in-tree (see `./configure --help`) and there are two files that 
-make the LibSPDM API available to use: `backend/spdm.c` and `include/sysemu/spdm.h`. Moreover, 
-there are modifications in `hw/nvme/ctrl.c` to use the implementations of `spdm.c`.
 
-Files related to PCI DOE were also modified to exchange the SPDM messages and two new 
-files were added, `hw/nvme/auth.c` and `hw/nvme/auth.c`, to configure SPDM context.
+QEMU compiles the LibSPDM in-tree (see `./configure --help`) and there are two files that 
+make the LibSPDM API available to use: `backend/spdm.c` and `include/system/spdm.h`.
 
 ### EDK2
 
@@ -21,66 +16,64 @@ Based on the work of the DeviceSecurity branch in edk2-staging repo, I adapted t
 to use the DXE stage in OVMF. The modifications consist in changing the code to use current 
 SPDM functions available in EDK2 and to use future PCI DOE support yet to be approved.
 
-You can check the modifications mainly in DeviceSecurity and DeployCert folder in OvmfPkg.
+You can check the modifications mainly in DeviceSecurityPkg directory.
 
 # Clone
 
 ```bash
 git clone https://github.com/htafr/uefi-spdm.git
 cd uefi-spdm 
-git submodule update --init --recursive
 ```
 
 # Build
 
-> My environment is based on Ubuntu 24.04 LTS aarch64.
+> My environment is based on openSUSE Tumbleweed 20250522 aarch64
 
-Install required packages.
+Install the required packages.
+
+## Ubuntu
 
 ```bash
 # EDK2
 sudo apt-get install build-essential uuid-dev iasl git nasm python-is-python3
 
 # QEMU
-sudo apt-get install libglib2.0-dev libfdt-dev libpixman-1-dev zlib1g-dev ninja-build nettle-dev
+sudo apt-get install libglib2.0-dev libfdt-dev libpixman-1-dev zlib1g-dev ninja-build nettle-dev libgtk-3-dev
 
-# TPM emulation 
+# TPM 
 sudo apt-get install swtpm
 ```
 
-
-EDK2 needs to build its BaseTools.
+## openSUSE
 
 ```bash
-make -C edk2/BaseTools
+sudo zypper in -t devel_basis
+
+# EDK2
+sudo zypper in git cmake nasm acpica
+
+# QEMU
+sudo zypper in ninja glib2-devel sdl2-compat-devel libnettle-devel libpixman-1-0-devel gtk3-devel
+
+# TPM
+sudo zypper in swtpm
 ```
 
-Copy files `target.txt` and `tools_def.txt`. The latter is needed only if the environment is not x86_64.
+## Common Instructions
 
 ```bash
-cp files/target.txt files/tools_def.txt edk2/Conf
-```
-
-Source the script available at the repo path to configure environment variables.
-
-```bash
-source set-env.sh
-```
-
-Run the Makefile commands.
-
-```bash
-make qemu-build
-make edk2-build
+make all
 ```
 
 # Run 
 
-The Makefile has three running rules: **x64-run**, **x64-dbg** and **x64-log**.
+```bash
+# Run the emulation without errors with SPDM authenticating PCIe and USB devices
+make run
 
-1. **x64-run**: normal qemu run 
-2. **x64-dbg**: attach qemu to gdb
-3. **x64-log**: persist qemu output to logs/log-x64.txt
+# Run the emulation with modified firmware hash value
+make integrity
+```
 
 # Certificates
 
