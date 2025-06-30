@@ -4,3 +4,9 @@
 [submodule "qemu"]
 	path = qemu
 	url = https://github.com/htafr/qemu.git
+[submodule "swtpm"]
+	path = swtpm
+	url = https://github.com/htafr/swtpm.git
+[submodule "libtpms"]
+	path = libtpms
+	url = https://github.com/htafr/libtpms.git
