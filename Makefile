@@ -27,9 +27,9 @@ PKG_CONFIG_PATH ?= "/usr/lib/pkgconfig:${REPO}/libtpms/build/lib64/pkgconfig"
 CFLAGS ?= "-I${REPO}/libtpms/include"
 
 CODEX64 = ${REPO}/edk2/Build/OvmfX64/DEBUG_GCC5/FV/OVMF_CODE.fd
-VARSX64 = ${REPO}/edk2/Build/OvmfX64/DEBUG_GCC5/FV/OVMF_VARS.fd
+VARSX64 = ${REPO}/edk2/Build/OvmfX64/DEBUG_GCC5/FV/OVMF_VARS_INTEGRITY.fd
 # VARSX64 = ${REPO}/ovmf_vars_spdm.fd
-VARSX64 = ${REPO}/vars.fd
+# VARSX64 = ${REPO}/vars.fd
 
 ZEROIMG = ${REPO}/images/zero.img
 USBIMG = ${REPO}/images/usb.img
@@ -119,9 +119,9 @@ edk2:
 	@source ${REPO}/edk2/edksetup.sh
 	@cd ${REPO}/edk2
 	@build -p OvmfPkg/OvmfPkgX64.dsc -t GCC5 -a X64 -b DEBUG -Y COMPILE_INFO -y ${REPO}/logs/OvmfPkgX64.log -DSECURE_BOOT_ENABLE=TRUE -DLIBSPDM_ENABLE=TRUE
-	$(PYTHON) ${REPO}/scripts/generate_vars_yaml -w ${REPO}
-	source ${REPO}/../ovmfvartool/.venv/bin/activate
-	ovmfvartool compile ${REPO}/vars.yaml ${REPO}/ovmf_vars_spdm.fd
+	# $(PYTHON) ${REPO}/scripts/generate_vars_yaml -w ${REPO}
+	# source ${REPO}/../ovmfvartool/.venv/bin/activate
+	# ovmfvartool compile ${REPO}/vars.yaml ${REPO}/ovmf_vars_spdm.fd
 
 .PHONY: run
 run: tpm
