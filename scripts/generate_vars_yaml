@@ -1,0 +1,100 @@
+#!/bin/python3
+
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes
+import yaml
+import argparse
+
+
+parser = argparse.ArgumentParser(
+            prog="generate_vars_yaml",
+            description="Generate OVMF_VARS.fd with SPDM certificates and Secure Boot Variables")
+parser.add_argument("-w", "--workspace",
+                    action="store",
+                    help="Base directory of EDK2 firmware",
+                    required=True)
+args = parser.parse_args()
+
+workdir = args.workspace
+yaml_file = f"{workdir}/vars.yaml"
+ovmf_vars = {"Variables": dict()}
+
+# Sizes
+efi_signature_list_size = 0x1c
+efi_guid_size = 0x10
+
+# EFI GUIDs
+gEfiGlobalVariableGuid = "61dfe48b-ca93-d211-aa0d-00e098032b8c"
+gEfiDeviceSecurityConfig = "6caa6167-bf41-384a-8493-266b119844fc"
+gEfiDeviceSignatureDatabaseGuid = "f4b4c2b9-5fbf-2d46-8adf-c5c70ac35dad"
+gEfiCertx509Guid = "a159c0a5-e494-a74a-87b5-ab155c2bf072"  # Little endian
+gEfiCallerIdGuid = "f94d7773-dcba-1146-aa41-b12ae468b27c"  # Little endian
+
+#
+# SPDM UEFI variables
+#
+# RequesterSpdmCertChain: Requester SPDM Certificate Chain
+bundle_requester_der = open(f"{workdir}/rsa2048/bundle_requester.certchain.der", "rb").read()
+bundle_requester_pem = open(f"{workdir}/rsa2048/bundle_requester.certchain.pem", "rb").read()
+bundle_requester_digest = x509.load_pem_x509_certificate(bundle_requester_pem).fingerprint(hashes.SHA384())
+requester_spdm_cert_chain_size = 4 + len(bundle_requester_digest + bundle_requester_der)
+requester_spdm_cert_chain = requester_spdm_cert_chain_size.to_bytes(2, "little") + \
+                            bytes(2) + \
+                            bundle_requester_digest + \
+                            bundle_requester_der
+
+requester_spdm_cert_chain_dict = {
+    gEfiDeviceSecurityConfig: {
+        "RequesterSpdmCertChain": {
+            "Boot Access": True,
+            "Data": requester_spdm_cert_chain
+        }
+    }
+}
+
+ovmf_vars["Variables"] = requester_spdm_cert_chain_dict
+
+# devdb: Device Security Database
+ovmf_vars["Variables"].update({gEfiDeviceSignatureDatabaseGuid: dict()})
+
+responder_public_certificate_chain_hash = open(f"{workdir}/rsa2048/ca.cert.der", "rb").read()
+responder_public_certificate_chain_hash_size = len(responder_public_certificate_chain_hash)
+signature_list_size = (efi_signature_list_size + efi_guid_size + responder_public_certificate_chain_hash_size).to_bytes(4, "little")
+signature_size = (efi_guid_size + responder_public_certificate_chain_hash_size).to_bytes(4, "little")
+devdb = bytes.fromhex(gEfiCertx509Guid.replace("-", "")) + \
+        signature_list_size + \
+        bytes(4) + \
+        signature_size + \
+        bytes.fromhex(gEfiCallerIdGuid.replace("-", "")) + \
+        responder_public_certificate_chain_hash
+
+devdb_dict = {
+    "devdb": {
+        "Boot Access": True,
+        "Data": devdb,
+        "Runtime Access": True
+    }
+}
+ovmf_vars["Variables"][gEfiDeviceSignatureDatabaseGuid] = devdb_dict
+
+# PrivDevKey: Private Device Key
+priv_dev_key = open(f"{workdir}/rsa2048/ca.key", "rb").read()
+priv_dev_key_dict = {
+    "PrivDevKey": {
+        "Boot Access": True,
+        "Data": priv_dev_key,
+        "Runtime Access": True
+    }
+}
+
+ovmf_vars["Variables"][gEfiDeviceSignatureDatabaseGuid].update(priv_dev_key_dict)
+
+#
+# Secure Boot Keys
+#
+# PK: Platform Key
+# pk = open(f"{workdir}/keys/PK.cer", "rb").read()
+
+with open(yaml_file, "w") as f:
+    yaml.dump(ovmf_vars, f, default_flow_style=False, sort_keys=False)
+
