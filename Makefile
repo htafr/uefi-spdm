@@ -6,26 +6,36 @@ REPO ?= $(shell pwd)
 ifeq ($(shell uname -m), arm64)
 TOOLCHAIN ?= AARCH64_GCC
 GCC5_X64_PREFIX ?= x86_64-linux-gnu-
+LDFLAGS ?= "-L/lib/aarch64-linux-gnu -L/usr/lib"
 else ifeq ($(shell uname -m), aarch64)
 TOOLCHAIN ?= AARCH64_GCC
 GCC5_X64_PREFIX ?= x86_64-linux-gnu-
+LDFLAGS ?= "-L/lib/aarch64-linux-gnu -L/usr/lib"
 else ifeq ($(shell uname -m), x86_64)
 TOOLCHAIN ?= GCC
 GCC5_X64_PREFIX ?= gcc
+LDFLAGS ?= ""
 endif
 
 MKDIR = @mkdir -p
 PYTHON = @$(shell which python3)
 QEMUX64 = ${REPO}/qemu/build/qemu-system-x86_64
+SWTPM = ${REPO}/swtpm/build/bin/swtpm
+# SWTPM = swtpm
+
+PKG_CONFIG_PATH ?= "/usr/lib/pkgconfig:${REPO}/libtpms/build/lib64/pkgconfig"
+CFLAGS ?= "-I${REPO}/libtpms/include"
 
 CODEX64 = ${REPO}/edk2/Build/OvmfX64/DEBUG_GCC5/FV/OVMF_CODE.fd
-VARSX64 = ${REPO}/edk2/Build/OvmfX64/DEBUG_GCC5/FV/OVMF_VARS_INTEGRITY.fd
+VARSX64 = ${REPO}/edk2/Build/OvmfX64/DEBUG_GCC5/FV/OVMF_VARS.fd
+# VARSX64 = ${REPO}/ovmf_vars_spdm.fd
+VARSX64 = ${REPO}/vars.fd
 
 ZEROIMG = ${REPO}/images/zero.img
 USBIMG = ${REPO}/images/usb.img
 
+# -global driver=cfi.pflash01,property=secure,value=on
 QFLAGSX64 = -M q35,smm=on -smp 4 -m 1G -nodefaults -bios none \
-						-nographic \
 						-chardev stdio,mux=on,id=char0 \
 						-serial chardev:char0 \
 						-monitor vc \
@@ -55,12 +65,11 @@ QFLAGSX64 = -M q35,smm=on -smp 4 -m 1G -nodefaults -bios none \
 						-tpmdev emulator,id=tpm0,chardev=chrtpm \
 						-device tpm-tis,tpmdev=tpm0
 
-TPMEMU = swtpm socket --tpm2 -d \
+TPMEMU = $(SWTPM) socket --tpm2 -d \
 				 --tpmstate dir=/tmp/tpm,mode=0600,lock \
 				 --ctrl type=unixio,path=/tmp/tpm/swtpm-sock,mode=0600,terminate \
 				 --flags disable-auto-shutdown \
-				 --log level=20,file=${REPO}/logs/tpm.txt \
-				 --terminate
+				 --log level=20,file=${REPO}/logs/tpm.txt
 
 .PHONY: help
 help:
@@ -74,14 +83,23 @@ help:
 	@echo "    qemu          configure and build qemu"
 	@echo "    qemu-config   configure qemu"
 	@echo "    edk2          build OVMF firmware"
+	@echo "    libtpms       build libtpms"
+	@echo "    swtpm         build swtpm and libtpms"
 	@echo "    run           run emulation"
+	@echo "    run-cli       run emulation without GUI"
 	@echo "    integrity     run emulation with wrong supplied firmware hash"
 	@echo "    tpm           run TPM emulation"
-	@echo "    dirs          create logs/, qemu/build/, and /tmp/tpm/"
+	@echo "    dirs          create logs/, qemu/build/, images/, keys/, /tmp/tpm,"
+	@echo "                  libtpms/build, and swtpm/build"
+	@echo "    clean         clean build"
+	@echo "    clean-edk2    clean EDKII build"
+	@echo "    clean-qemu    clean QEMU build"
+	@echo "    clean-libtpms clean libtpms build"
+	@echo "    clean-swtpm   clean swtpm build"
 	@echo 
 
 .PHONY: all
-all: init qemu edk2
+all: init qemu edk2 swtpm
 
 .PHONY: init
 init: dirs
@@ -100,12 +118,20 @@ edk2:
 	@export GCC5_BIN=${GCC5_X64_PREFIX}
 	@source ${REPO}/edk2/edksetup.sh
 	@cd ${REPO}/edk2
-	@build -p OvmfPkg/OvmfPkgX64.dsc -t GCC5 -a X64 -b DEBUG -Y COMPILE_INFO -y ${REPO}/logs/OvmfPkgX64.log
+	@build -p OvmfPkg/OvmfPkgX64.dsc -t GCC5 -a X64 -b DEBUG -Y COMPILE_INFO -y ${REPO}/logs/OvmfPkgX64.log -DSECURE_BOOT_ENABLE=TRUE -DLIBSPDM_ENABLE=TRUE
+	$(PYTHON) ${REPO}/scripts/generate_vars_yaml -w ${REPO}
+	source ${REPO}/../ovmfvartool/.venv/bin/activate
+	ovmfvartool compile ${REPO}/vars.yaml ${REPO}/ovmf_vars_spdm.fd
 
 .PHONY: run
 run: tpm
 	$(PYTHON) ${REPO}/scripts/compute_hash -w ${REPO}/edk2
 	$(QEMUX64) $(QFLAGSX64)
+
+.PHONY: run-cli
+run-cli: tpm
+	$(PYTHON) ${REPO}/scripts/compute_hash -w ${REPO}/edk2
+	$(QEMUX64) $(QFLAGSX64) -nographic
 
 .PHONY: integrity
 integrity: tpm
@@ -113,10 +139,10 @@ integrity: tpm
 	$(QEMUX64) $(QFLAGSX64)
 
 .PHONY: tpm
-tpm:
+tpm: dirs
 	$(TPMEMU)
 
-qemu-config:
+qemu-config: dirs
 	@cd ${REPO}/qemu/build
 	../configure \
 		--target-list=x86_64-softmmu \
@@ -132,10 +158,53 @@ qemu-config:
 		--enable-sdl \
 		--enable-slirp
 
+.PHONY: libtpms
+libtpms: dirs
+	@cd ${REPO}/libtpms
+	CFLAGS=${CFLAGS} LDFLAGS=${LDFLAGS} ./autogen.sh --prefix=${REPO}/libtpms/build --enable-debug --with-openssl --with-libspdm --with-tpm2
+	$(MAKE)
+	$(MAKE) check
+	$(MAKE) install
+
+.PHONY: swtpm 
+swtpm: dirs libtpms
+	@cd ${REPO}/swtpm
+	PKG_CONFIG_PATH=${PKG_CONFIG_PATH} CFLAGS=${CFLAGS} ./autogen.sh --prefix=${REPO}/swtpm/build --srcdir=${REPO}/swtpm --enable-debug --without-seccomp --without-cuse --with-openssl --with-libspdm
+	$(MAKE)
+	$(MAKE) install
+
+# -nodes: No DES encryption
+.PHONY: keys
+keys: dirs
+	openssl req -nodes -new -x509 -newkey rsa:2048 -keyout ${REPO}/keys/PK.key -out ${REPO}/keys/PK.crt -days 365 -subj "/CN=UEFI SPDM" -sha256
+	openssl x509 -in ${REPO}/keys/PK.crt -out ${REPO}/keys/PK.cer -outform DER
+	openssl req -nodes -new -x509 -newkey rsa:2048 -keyout ${REPO}/keys/KEK.key -out ${REPO}/keys/KEK.crt -days 365 -subj "/CN=UEFI SPDM" -sha256
+	openssl x509 -in ${REPO}/keys/KEK.crt -out ${REPO}/keys/KEK.cer -outform DER
+
 .PHONY: dirs
 dirs:
 	$(MKDIR) ${REPO}/logs/
 	$(MKDIR) ${REPO}/qemu/build
 	$(MKDIR) ${REPO}/images
+	$(MKDIR) ${REPO}/keys
+	$(MKDIR) ${REPO}/libtpms/build
+	$(MKDIR) ${REPO}/swtpm/build
 	$(MKDIR) /tmp/tpm
+
+.PHONY: clean
+clean: clean-edk2 clean-qemu clean-swtpm clean-libtpms
+
+clean-qemu:
+	rm -rf ${REPO}/qemu/build
+
+clean-edk2:
+	rm -rf ${REPO}/edk2/Build
+
+clean-libtpms:
+	rm -rf ${REPO}/libtpms/build
+	$(MAKE) -C ${REPO}/libtpms maintainer-clean
+
+clean-swtpm:
+	rm -rf ${REPO}/swtpm/build
+	$(MAKE) -C ${REPO}/swtpm maintainer-clean
 
