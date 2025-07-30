@@ -1,0 +1,66 @@
+#!/bin/python3
+
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes,serialization
+
+def dump_hex(bin : bytes, size : int):
+    dump = ''
+    for i in range(0, size*2, 2):
+        if (i % 32 == 0) and (i != 0): 
+            dump += '\n'
+        dump += f'0x{bin.hex()[i:i+2].upper()}, '
+    dump = dump[:-2]
+    return dump
+
+def main():
+  while (True):
+    path = input('Path to the certificates directory: ')
+
+    with open(path + '/ca.cert.der', 'rb') as f:
+        ca = f.read()
+    with open(path + '/bundle_responder.certchain.der', 'rb') as f:
+        responder_certchain = f.read()
+
+
+    print('''Options:
+      1. Responder root certificate
+      2. Responder public key
+      3. Responder certificate chain
+    ''')
+
+    choice = int(input('Choose one option: '))
+
+    root_cert = x509.load_der_x509_certificate(ca)
+
+    match choice:
+      case 1:
+        # Responder root certificate
+        hex_root_cert = dump_hex(ca, len(ca))
+        print('Responder Root Cert:\n\t' + hex_root_cert.replace('\n', '\n\t'))
+      case 2:
+        # Responder public key
+        pubkey = root_cert.public_key() \
+                          .public_bytes(
+                            encoding=serialization.Encoding.DER,
+                            format=serialization.PublicFormat.SubjectPublicKeyInfo
+                          )
+
+        hex_pubkey = dump_hex(pubkey, len(pubkey))
+        print('Responder Public Key:\n\t' + hex_pubkey.replace('\n', '\n\t'))
+      case 3:
+        # Responder certificate chain
+        fingerprint = root_cert.fingerprint(hashes.SHA384())
+
+        libspdm_certchain_size = len(bytes(4)) + len(fingerprint) + len(responder_certchain)
+        libspdm_certchain = libspdm_certchain_size.to_bytes(2, byteorder='little') + \
+                            bytes(2) + \
+                            fingerprint + \
+                            responder_certchain
+
+        hex_libspdm_certchain = dump_hex(libspdm_certchain, libspdm_certchain_size)
+
+        print('Responder Certificate Chain:\n\t' + hex_libspdm_certchain.replace('\n', '\n\t'))
+    print()
+
+if __name__ == '__main__':
+  main()
