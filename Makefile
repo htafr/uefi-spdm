@@ -5,11 +5,11 @@ REPO ?= $(shell pwd)
 
 ifeq ($(shell uname -m), arm64)
 TOOLCHAIN ?= AARCH64_GCC
-GCC5_X64_PREFIX ?= x86_64-linux-gnu-
+GCC5_X64_PREFIX ?= x86_64-suse-linux-
 LDFLAGS ?= "-L/lib/aarch64-linux-gnu -L/usr/lib"
 else ifeq ($(shell uname -m), aarch64)
 TOOLCHAIN ?= AARCH64_GCC
-GCC5_X64_PREFIX ?= x86_64-linux-gnu-
+GCC5_X64_PREFIX ?= x86_64-suse-linux-
 LDFLAGS ?= "-L/lib/aarch64-linux-gnu -L/usr/lib"
 else ifeq ($(shell uname -m), x86_64)
 TOOLCHAIN ?= GCC
@@ -20,8 +20,8 @@ endif
 MKDIR = @mkdir -p
 PYTHON = @$(shell which python3)
 QEMUX64 = ${REPO}/qemu/build/qemu-system-x86_64
-SWTPM = ${REPO}/swtpm/build/bin/swtpm
-# SWTPM = swtpm
+# SWTPM = ${REPO}/swtpm/build/bin/swtpm
+SWTPM = swtpm
 
 PKG_CONFIG_PATH ?= "/usr/lib/pkgconfig:${REPO}/libtpms/build/lib64/pkgconfig"
 CFLAGS ?= "-I${REPO}/libtpms/include"
@@ -69,7 +69,7 @@ TPMEMU = $(SWTPM) socket --tpm2 -d \
 				 --tpmstate dir=/tmp/tpm,mode=0600,lock \
 				 --ctrl type=unixio,path=/tmp/tpm/swtpm-sock,mode=0600,terminate \
 				 --flags disable-auto-shutdown \
-				 --log level=20,file=${REPO}/logs/tpm.txt
+				 --log level=20,file=${REPO}/logs/tpm.log
 
 .PHONY: help
 help:
@@ -83,10 +83,9 @@ help:
 	@echo "    qemu          configure and build qemu"
 	@echo "    qemu-config   configure qemu"
 	@echo "    edk2          build OVMF firmware"
-	@echo "    libtpms       build libtpms"
-	@echo "    swtpm         build swtpm and libtpms"
 	@echo "    run           run emulation"
 	@echo "    run-cli       run emulation without GUI"
+	@echo "    dbg           run emulation to attach to a gdb instance"
 	@echo "    integrity     run emulation with wrong supplied firmware hash"
 	@echo "    tpm           run TPM emulation"
 	@echo "    dirs          create logs/, qemu/build/, images/, keys/, /tmp/tpm,"
@@ -103,7 +102,6 @@ all: init qemu edk2 swtpm
 
 .PHONY: init
 init: dirs
-	git submodule update --init --recursive
 	$(MAKE) -C ${REPO}/edk2/BaseTools
 	@dd if=/dev/zero of=${ZEROIMG} bs=32M count=1
 	@dd if=/dev/zero of=${USBIMG} bs=32M count=1
@@ -133,6 +131,11 @@ run-cli: tpm
 	$(PYTHON) ${REPO}/scripts/compute_hash -w ${REPO}/edk2
 	$(QEMUX64) $(QFLAGSX64) -nographic
 
+.PHONY: dbg
+dbg: tpm
+	$(PYTHON) ${REPO}/scripts/compute_hash -w ${REPO}/edk2
+	$(QEMUX64) $(QFLAGSX64) -nographic -s -S
+
 .PHONY: integrity
 integrity: tpm
 	$(PYTHON) ${REPO}/scripts/compute_hash -w ${REPO}/edk2 -m
@@ -157,21 +160,6 @@ qemu-config: dirs
 		--enable-system \
 		--enable-sdl \
 		--enable-slirp
-
-.PHONY: libtpms
-libtpms: dirs
-	@cd ${REPO}/libtpms
-	CFLAGS=${CFLAGS} LDFLAGS=${LDFLAGS} ./autogen.sh --prefix=${REPO}/libtpms/build --enable-debug --with-openssl --with-libspdm --with-tpm2
-	$(MAKE)
-	$(MAKE) check
-	$(MAKE) install
-
-.PHONY: swtpm 
-swtpm: dirs libtpms
-	@cd ${REPO}/swtpm
-	PKG_CONFIG_PATH=${PKG_CONFIG_PATH} CFLAGS=${CFLAGS} ./autogen.sh --prefix=${REPO}/swtpm/build --srcdir=${REPO}/swtpm --enable-debug --without-seccomp --without-cuse --with-openssl --with-libspdm
-	$(MAKE)
-	$(MAKE) install
 
 # -nodes: No DES encryption
 .PHONY: keys
