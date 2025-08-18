@@ -2,6 +2,9 @@
 
 import hashlib
 import argparse
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import hashes,serialization
+from cryptography.hazmat.primitives.asymmetric import padding
 
 parser = argparse.ArgumentParser(
             prog="compute_hash",
@@ -13,6 +16,9 @@ parser.add_argument("-w", "--workspace",
                     action="store",
                     help="Base directory of EDK2 firmware",
                     required=True)
+parser.add_argument("-d", "--dry-run",
+                    action="store_true",
+                    help="Run without writing output hash to file")
 args = parser.parse_args()
 
 workdir = args.workspace
@@ -20,8 +26,16 @@ f_vars = open(f"{workdir}/Build/OvmfX64/DEBUG_GCC5/FV/OVMF_VARS.fd", "rb")
 f_code = open(f"{workdir}/Build/OvmfX64/DEBUG_GCC5/FV/OVMF_CODE.fd", "rb")
 f_new = open(f"{workdir}/Build/OvmfX64/DEBUG_GCC5/FV/OVMF_VARS_INTEGRITY.fd", "w+b")
 
+with open(f"{workdir}/../rsa2048/ca.key.der", "rb") as key_file:
+    private_key = serialization.load_der_private_key(
+        key_file.read(),
+        password=None,
+        backend=default_backend()
+        )
+public_key = private_key.public_key()
+
 bios_hash = hashlib.sha256()
-bios_hash.update(f_vars.read())
+# bios_hash.update(f_vars.read())
 bios_hash.update(f_code.read())
 print("BIOS hash:", end="\n\t")
 print(bios_hash.hexdigest())
@@ -34,10 +48,22 @@ pcr_hash.update(data)
 print("PCR 0:", end="\n\t")
 print(pcr_hash.hexdigest())
 
-f_vars.seek(0)
-f_new.write(f_vars.read())
-f_new.seek(0x42000)
-f_new.write(pcr_hash.digest())
+signature = private_key.sign(
+                pcr_hash.digest(),
+                padding.PSS(
+                    mgf=padding.MGF1(hashes.SHA256()),
+                    salt_length=padding.PSS.MAX_LENGTH
+                ),
+            hashes.SHA256()
+            )
+print("Signed hash:", end="\n\t")
+print(signature.hex())
+
+if not args.dry_run:
+    f_vars.seek(0)
+    f_new.write(f_vars.read())
+    f_new.seek(0x42000)
+    f_new.write(pcr_hash.digest())
 
 # This modifies the firmware for test purposes
 if args.modify:

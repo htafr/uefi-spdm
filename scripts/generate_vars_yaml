@@ -1,9 +1,9 @@
 #!/bin/python3
 
-from cryptography import x509
-from cryptography.hazmat.primitives import hashes
 import yaml
 import argparse
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes
 
 
 parser = argparse.ArgumentParser(
@@ -34,9 +34,13 @@ gEfiCallerIdGuid = "f94d7773-dcba-1146-aa41-b12ae468b27c"  # Little endian
 # SPDM UEFI variables
 #
 # RequesterSpdmCertChain: Requester SPDM Certificate Chain
-bundle_requester_der = open(f"{workdir}/rsa2048/bundle_requester.certchain.der", "rb").read()
-bundle_requester_pem = open(f"{workdir}/rsa2048/bundle_requester.certchain.pem", "rb").read()
-bundle_requester_digest = x509.load_pem_x509_certificate(bundle_requester_pem).fingerprint(hashes.SHA384())
+with open(f"{workdir}/rsa2048/bundle_requester.certchain.der", "rb") as f:
+    bundle_requester_der = f.read()
+
+with open(f"{workdir}/rsa2048/ca.cert.der", "rb") as f:
+    ca = f.read()
+
+bundle_requester_digest = x509.load_der_x509_certificate(ca).fingerprint(hashes.SHA256())
 requester_spdm_cert_chain_size = 4 + len(bundle_requester_digest + bundle_requester_der)
 requester_spdm_cert_chain = requester_spdm_cert_chain_size.to_bytes(2, "little") + \
                             bytes(2) + \
@@ -47,7 +51,7 @@ requester_spdm_cert_chain_dict = {
     gEfiDeviceSecurityConfig: {
         "RequesterSpdmCertChain": {
             "Boot Access": True,
-            "Data": requester_spdm_cert_chain
+            "Data": requester_spdm_cert_chain,
         }
     }
 }
@@ -57,7 +61,7 @@ ovmf_vars["Variables"] = requester_spdm_cert_chain_dict
 # devdb: Device Security Database
 ovmf_vars["Variables"].update({gEfiDeviceSignatureDatabaseGuid: dict()})
 
-responder_public_certificate_chain_hash = open(f"{workdir}/rsa2048/ca.cert.der", "rb").read()
+responder_public_certificate_chain_hash = ca
 responder_public_certificate_chain_hash_size = len(responder_public_certificate_chain_hash)
 signature_list_size = (efi_signature_list_size + efi_guid_size + responder_public_certificate_chain_hash_size).to_bytes(4, "little")
 signature_size = (efi_guid_size + responder_public_certificate_chain_hash_size).to_bytes(4, "little")
@@ -78,16 +82,43 @@ devdb_dict = {
 ovmf_vars["Variables"][gEfiDeviceSignatureDatabaseGuid] = devdb_dict
 
 # PrivDevKey: Private Device Key
-priv_dev_key = open(f"{workdir}/rsa2048/ca.key", "rb").read()
+with open(f"{workdir}/rsa2048/end_requester.key", "rb") as f:
+    private_key_hex = f.read()
 priv_dev_key_dict = {
     "PrivDevKey": {
         "Boot Access": True,
-        "Data": priv_dev_key,
-        "Runtime Access": True
+        "Data": private_key_hex,
+        "Runtime Access": True,
     }
 }
 
 ovmf_vars["Variables"][gEfiDeviceSignatureDatabaseGuid].update(priv_dev_key_dict)
+
+# FirmwareHash: TPM H-CRTM
+with open(f"{workdir}/keys/HCRTM.hash", "rb") as f:
+    hcrtm = f.read()
+
+firmware_hash_dict = {
+    "FirmwareHash": {
+        "Boot Access": True,
+        "Data": hcrtm
+    }
+}
+
+ovmf_vars["Variables"][gEfiDeviceSignatureDatabaseGuid].update(firmware_hash_dict)
+
+# FirmHashSign: Firmware hash signature
+with open(f"{workdir}/keys/HCRTM.sig", "rb") as f:
+    hcrtm_signature = f.read()
+
+sign_dict = {
+    "FirmHashSign": {
+        "Boot Access": True,
+        "Data": hcrtm_signature
+    }
+}
+
+ovmf_vars["Variables"][gEfiDeviceSignatureDatabaseGuid].update(sign_dict)
 
 #
 # Secure Boot Keys

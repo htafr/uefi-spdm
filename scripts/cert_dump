@@ -7,7 +7,7 @@ def dump_hex(bin : bytes, size : int):
     dump = ''
     for i in range(0, size*2, 2):
         if (i % 32 == 0) and (i != 0): 
-            dump += '\n'
+            dump += '\n\t'
         dump += f'0x{bin.hex()[i:i+2].upper()}, '
     dump = dump[:-2]
     return dump
@@ -20,12 +20,22 @@ def main():
         ca = f.read()
     with open(path + '/bundle_responder.certchain.der', 'rb') as f:
         responder_certchain = f.read()
-
+    with open(path + '/bundle_requester.certchain.der', 'rb') as f:
+        requester_certchain = f.read()
+    with open(path + '/end_responder.key', 'rb') as f:
+        responder_private_key = f.read()
+    with open(path + '/end_requester.key', 'rb') as f:
+        requester_private_key = f.read()
 
     print('''Options:
       1. Responder root certificate
       2. Responder public key
-      3. Responder certificate chain
+      3. Responder private key
+      4. Responder certificate chain
+      5. Requester root certificate
+      6. Requester public key
+      7. Requester private key
+      8. Requester certificate chain
     ''')
 
     choice = int(input('Choose one option: '))
@@ -33,33 +43,68 @@ def main():
     root_cert = x509.load_der_x509_certificate(ca)
 
     match choice:
-      case 1:
-        # Responder root certificate
-        hex_root_cert = dump_hex(ca, len(ca))
-        print('Responder Root Cert:\n\t' + hex_root_cert.replace('\n', '\n\t'))
-      case 2:
-        # Responder public key
-        pubkey = root_cert.public_key() \
-                          .public_bytes(
-                            encoding=serialization.Encoding.DER,
-                            format=serialization.PublicFormat.SubjectPublicKeyInfo
-                          )
+        case 1:
+            # Responder root certificate
+            hex_root_cert = dump_hex(ca, len(ca))
+            print('Responder Root Cert:\n\t' + hex_root_cert)
+        case 2:
+            # Responder public key
+            pubkey = root_cert.public_key() \
+                            .public_bytes(
+                                encoding=serialization.Encoding.DER,
+                                format=serialization.PublicFormat.SubjectPublicKeyInfo
+                            )
 
-        hex_pubkey = dump_hex(pubkey, len(pubkey))
-        print('Responder Public Key:\n\t' + hex_pubkey.replace('\n', '\n\t'))
-      case 3:
-        # Responder certificate chain
-        fingerprint = root_cert.fingerprint(hashes.SHA384())
+            hex_pubkey = dump_hex(pubkey, len(pubkey))
+            print('Responder Public Key:\n\t' + hex_pubkey)
+        case 3:
+            # Responder private key
+            hex_private_key = dump_hex(responder_private_key, len(responder_private_key))
+            print('Responder Private Key:\n\t' + hex_private_key)
+        case 4:
+            # Responder certificate chain
+            fingerprint = root_cert.fingerprint(hashes.SHA384())
 
-        libspdm_certchain_size = len(bytes(4)) + len(fingerprint) + len(responder_certchain)
-        libspdm_certchain = libspdm_certchain_size.to_bytes(2, byteorder='little') + \
-                            bytes(2) + \
-                            fingerprint + \
-                            responder_certchain
+            libspdm_certchain_size = len(bytes(4)) + len(fingerprint) + len(responder_certchain)
+            libspdm_certchain = libspdm_certchain_size.to_bytes(2, byteorder='little') + \
+                                bytes(2) + \
+                                fingerprint + \
+                                responder_certchain
 
-        hex_libspdm_certchain = dump_hex(libspdm_certchain, libspdm_certchain_size)
+            hex_libspdm_certchain = dump_hex(libspdm_certchain, libspdm_certchain_size)
 
-        print('Responder Certificate Chain:\n\t' + hex_libspdm_certchain.replace('\n', '\n\t'))
+            print('Responder Certificate Chain:\n\t' + hex_libspdm_certchain)
+        case 5:
+            # Requester root certificate
+            hex_root_cert = dump_hex(ca, len(ca))
+            print('Requester Root Cert:\n\t' + hex_root_cert)
+        case 6:
+            # Requester public key
+            pubkey = root_cert.public_key() \
+                              .public_bytes(
+                                encoding=serialization.Encoding.DER,
+                                format=serialization.PublicFormat.SubjectPublicKeyInfo
+                                )
+
+            hex_pubkey = dump_hex(pubkey, len(pubkey))
+            print('Requester Public Key:\n\t' + hex_pubkey)
+        case 7:
+            # Requester private key
+            hex_private_key = dump_hex(requester_private_key, len(requester_private_key))
+            print('Requester Private Key:\n\t' + hex_private_key)
+        case 8:
+            # Requester certificate chain
+            fingerprint = root_cert.fingerprint(hashes.SHA256())
+
+            libspdm_certchain_size = len(bytes(4)) + len(fingerprint) + len(responder_certchain)
+            libspdm_certchain = libspdm_certchain_size.to_bytes(2, byteorder='little') + \
+                                bytes(2) + \
+                                fingerprint + \
+                                requester_certchain
+
+            hex_libspdm_certchain = dump_hex(libspdm_certchain, libspdm_certchain_size)
+
+            print('Requester Certificate Chain:\n\t' + hex_libspdm_certchain)
     print()
 
 if __name__ == '__main__':
