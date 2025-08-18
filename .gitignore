@@ -1,4 +1,11 @@
+.cache/
 Build/
 build/
 logs/
 images/
+keys/
+scripts/generate_keys
+*.log
+*.fd
+*.yaml
+*.json
