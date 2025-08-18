@@ -1,5 +1,5 @@
-.SHELL := /usr/bin/bash
 .ONESHELL:
+SHELL := /usr/bin/bash
 
 REPO ?= $(shell pwd)
 
@@ -18,17 +18,19 @@ LDFLAGS ?= ""
 endif
 
 MKDIR = @mkdir -p
-PYTHON = @$(shell which python3)
+PYTHON = $(shell which python3)
 QEMUX64 = ${REPO}/qemu/build/qemu-system-x86_64
-# SWTPM = ${REPO}/swtpm/build/bin/swtpm
 SWTPM = swtpm
+CC = gcc
 
 PKG_CONFIG_PATH ?= "/usr/lib/pkgconfig:${REPO}/libtpms/build/lib64/pkgconfig"
 CFLAGS ?= "-I${REPO}/libtpms/include"
+VENV_PATH ?= ${REPO}/.spdm-venv
 
 CODEX64 = ${REPO}/edk2/Build/OvmfX64/DEBUG_GCC5/FV/OVMF_CODE.fd
-VARSX64 = ${REPO}/edk2/Build/OvmfX64/DEBUG_GCC5/FV/OVMF_VARS_INTEGRITY.fd
+# VARSX64 = ${REPO}/edk2/Build/OvmfX64/DEBUG_GCC5/FV/OVMF_VARS_INTEGRITY.fd
 # VARSX64 = ${REPO}/ovmf_vars_spdm.fd
+VARSX64 = ${REPO}/ovmf_vars_custom.fd
 # VARSX64 = ${REPO}/vars.fd
 
 ZEROIMG = ${REPO}/images/zero.img
@@ -76,74 +78,80 @@ help:
 	@echo "make [option]"
 	@echo 
 	@echo "options:"
-	@echo "    help          print this message"
-	@echo "    all           initialize repo, build qemu and edk2"
-	@echo "    init          initialize git submodules, compile BaseTools,"
-	@echo "                  and create disk images"
-	@echo "    qemu          configure and build qemu"
-	@echo "    qemu-config   configure qemu"
-	@echo "    edk2          build OVMF firmware"
-	@echo "    run           run emulation"
-	@echo "    run-cli       run emulation without GUI"
-	@echo "    dbg           run emulation to attach to a gdb instance"
-	@echo "    integrity     run emulation with wrong supplied firmware hash"
-	@echo "    tpm           run TPM emulation"
-	@echo "    dirs          create logs/, qemu/build/, images/, keys/, /tmp/tpm,"
-	@echo "                  libtpms/build, and swtpm/build"
-	@echo "    clean         clean build"
-	@echo "    clean-edk2    clean EDKII build"
-	@echo "    clean-qemu    clean QEMU build"
-	@echo "    clean-libtpms clean libtpms build"
-	@echo "    clean-swtpm   clean swtpm build"
+	@echo "    help            print this message"
+	@echo "    all             initialize repo, build qemu and edk2"
+	@echo "    init            initialize git submodules, compile BaseTools,"
+	@echo "                    create disk images, and create virtual environment"
+	@echo "    qemu            configure and build qemu"
+	@echo "    qemu-config     configure qemu"
+	@echo "    edk2            build OVMF firmware"
+	@echo "    generate_keys   generate platform keys using GnuTLS"
+	@echo "    run             run emulation"
+	@echo "    run-cli         run emulation without GUI"
+	@echo "    dbg             run emulation to attach to a gdb instance"
+	@echo "    integrity       run emulation with wrong supplied firmware hash"
+	@echo "    tpm             run TPM emulation"
+	@echo "    dirs            create logs/, qemu/build/, images/, keys/, /tmp/tpm"
+	@echo "    clean           clean build"
+	@echo "    clean-edk2      clean EDKII build"
+	@echo "    clean-qemu      clean QEMU build"
 	@echo 
 
 .PHONY: all
-all: init qemu edk2 swtpm
+all: init qemu edk2
 
 .PHONY: init
 init: dirs
 	$(MAKE) -C ${REPO}/edk2/BaseTools
 	@dd if=/dev/zero of=${ZEROIMG} bs=32M count=1
 	@dd if=/dev/zero of=${USBIMG} bs=32M count=1
+	@if ! test -d ${VENV_PATH}; then ${PYTHON} -m venv ${VENV_PATH}; fi
+	@source ${VENV_PATH}/bin/activate
+	@pip install setuptools PyYAML cryptography ${REPO}/ovmfvartool
 
 .PHONY: qemu
 qemu: qemu-config
 	$(MAKE) -C ${REPO}/qemu/build
 
 .PHONY: edk2
-edk2:
+edk2: generate_keys
 	@export WORKSPACE=${REPO}/edk2
 	@export GCC5_BIN=${GCC5_X64_PREFIX}
 	@source ${REPO}/edk2/edksetup.sh
 	@cd ${REPO}/edk2
-	@build -p OvmfPkg/OvmfPkgX64.dsc -t GCC5 -a X64 -b DEBUG -Y COMPILE_INFO -y ${REPO}/logs/OvmfPkgX64.log -DSECURE_BOOT_ENABLE=TRUE -DLIBSPDM_ENABLE=TRUE
-	# $(PYTHON) ${REPO}/scripts/generate_vars_yaml -w ${REPO}
-	# source ${REPO}/../ovmfvartool/.venv/bin/activate
-	# ovmfvartool compile ${REPO}/vars.yaml ${REPO}/ovmf_vars_spdm.fd
+	@build -p OvmfPkg/OvmfPkgX64.dsc -t GCC5 -a X64 -b DEBUG -Y COMPILE_INFO -y ${REPO}/logs/OvmfPkgX64.log -DSECURE_BOOT_ENABLE=TRUE -DLIBSPDM_ENABLE=TRUE -DSMM_REQUIRE=TRUE
+
+.PHONY: generate_keys
+generate_keys:
+	$(CC) -O3 -g -Wall -lgnutls ${REPO}/scripts/generate_keys.c -o ${REPO}/scripts/generate_keys
+	@cd ${REPO}
+	@${REPO}/scripts/generate_keys
+
+.PHONY: vars
+vars: generate_keys
+	@source ${VENV_PATH}/bin/activate
+	@python ${REPO}/scripts/generate_vars_yaml -w ${REPO}
+	@ovmfvartool compile ${REPO}/vars.yaml ${REPO}/ovmf_vars_custom.fd
 
 .PHONY: run
-run: tpm
-	$(PYTHON) ${REPO}/scripts/compute_hash -w ${REPO}/edk2
+run: tpm vars
 	$(QEMUX64) $(QFLAGSX64)
 
 .PHONY: run-cli
-run-cli: tpm
-	$(PYTHON) ${REPO}/scripts/compute_hash -w ${REPO}/edk2
+run-cli: tpm vars
 	$(QEMUX64) $(QFLAGSX64) -nographic
 
 .PHONY: dbg
-dbg: tpm
-	$(PYTHON) ${REPO}/scripts/compute_hash -w ${REPO}/edk2
+dbg: tpm vars
 	$(QEMUX64) $(QFLAGSX64) -nographic -s -S
 
 .PHONY: integrity
-integrity: tpm
-	$(PYTHON) ${REPO}/scripts/compute_hash -w ${REPO}/edk2 -m
+integrity: tpm vars
 	$(QEMUX64) $(QFLAGSX64)
 
 .PHONY: tpm
 tpm: dirs
-	$(TPMEMU)
+	@$(TPMEMU)
 
 qemu-config: dirs
 	@cd ${REPO}/qemu/build
@@ -155,7 +163,7 @@ qemu-config: dirs
 		--libspdm-toolchain=${TOOLCHAIN} \
 		--enable-gcov \
 		--enable-debug \
-		--enable-nettle \
+		--enable-gnutls \
 		--enable-gtk \
 		--enable-system \
 		--enable-sdl \
@@ -175,24 +183,14 @@ dirs:
 	$(MKDIR) ${REPO}/qemu/build
 	$(MKDIR) ${REPO}/images
 	$(MKDIR) ${REPO}/keys
-	$(MKDIR) ${REPO}/libtpms/build
-	$(MKDIR) ${REPO}/swtpm/build
 	$(MKDIR) /tmp/tpm
 
 .PHONY: clean
-clean: clean-edk2 clean-qemu clean-swtpm clean-libtpms
+clean: clean-edk2 clean-qemu
 
 clean-qemu:
 	rm -rf ${REPO}/qemu/build
 
 clean-edk2:
 	rm -rf ${REPO}/edk2/Build
-
-clean-libtpms:
-	rm -rf ${REPO}/libtpms/build
-	$(MAKE) -C ${REPO}/libtpms maintainer-clean
-
-clean-swtpm:
-	rm -rf ${REPO}/swtpm/build
-	$(MAKE) -C ${REPO}/swtpm maintainer-clean
 
