@@ -1,7 +1,20 @@
 .ONESHELL:
 SHELL := /usr/bin/bash
 
+# $(eval GUID := $(shell uuidgen))
+# openssl req -x509 -new -nodes -sha256 -subj "/CN=LARC/" -key ${KEYS}/PK.key -outform PEM -out ${KEYS}/PK.pem -days 365
+# sed \
+# 	-e "s/^-----BEGIN CERTIFICATE-----$$/${GUID}:/" \
+# 	-e "/^-----END CERTIFICATE-----$$/d" \
+# 	${KEYS}/PK.pem \
+# 	| tr -d '\n' >${KEYS}/PK.oemstr
+# openssl x509 -in ${KEYS}/PK.pem -inform PEM -out ${KEYS}/PK.cer -outform DER
+# sbsiglist --owner ${GUID} --type x509 --output ${KEYS}/PK.esl ${KEYS}/PK.cer
+# sbvarsign --key ${KEYS}/PK.key --cert ${KEYS}/PK.pem --output ${KEYS}/PK.auth ${KEYS}/PK ${KEYS}/PK.esl
 REPO ?= $(shell pwd)
+KEYS = ${REPO}/keys
+GRUB = ${REPO}/../grub
+LINUX = ${REPO}/../linux
 
 ifeq ($(shell uname -m), arm64)
 TOOLCHAIN ?= AARCH64_GCC
@@ -34,13 +47,15 @@ VARSX64 = ${REPO}/ovmf_vars_custom.fd
 # VARSX64 = ${REPO}/vars.fd
 
 ZEROIMG = ${REPO}/images/zero.img
+DISKIMG = ${REPO}/../buildroot/output/images/disk.img
+# DISKIMG = ${REPO}/../linux/disk.img
+KEYSIMG = ${REPO}/images/keys.img
 USBIMG = ${REPO}/images/usb.img
 
 # -global driver=cfi.pflash01,property=secure,value=on
 QFLAGSX64 = -M q35,smm=on -smp 4 -m 1G -nodefaults -bios none \
 						-chardev stdio,mux=on,id=char0 \
 						-serial chardev:char0 \
-						-monitor vc \
 						-device pcie-root-port,id=pci20,bus=pcie.0,chassis=1,addr=2.0,multifunction=on,pref64-reserve=32M \
 						-device pcie-root-port,id=pci21,bus=pcie.0,chassis=2,addr=2.1 \
 						-device pcie-root-port,id=pci22,bus=pcie.0,chassis=3,addr=2.2 \
@@ -48,7 +63,6 @@ QFLAGSX64 = -M q35,smm=on -smp 4 -m 1G -nodefaults -bios none \
 						-device pcie-root-port,id=pci30,bus=pcie.0,chassis=31,addr=3.0,multifunction=on,pref64-reserve=32M \
 						-device pcie-root-port,id=pci31,bus=pcie.0,chassis=32,addr=3.1 \
 						-device virtio-serial-pci,bus=pci21 \
-						-device virtconsole,chardev=char0,id=console0 \
 						-device isa-debugcon,iobase=0x402,chardev=char0 \
 						-object rng-random,filename=/dev/urandom,id=rng0 \
 						-device virtio-rng-pci,bus=pci22,rng=rng0 \
@@ -57,11 +71,13 @@ QFLAGSX64 = -M q35,smm=on -smp 4 -m 1G -nodefaults -bios none \
 						-usb \
 						-device qemu-xhci,id=xhci \
 						-device usb-storage,bus=xhci.0,drive=stick,removable=on \
+						-device usb-serial,chardev=char0,id=console0,bus=xhci.0 \
+						-device usb-kbd,bus=xhci.0 \
+						-device usb-mouse,bus=xhci.0 \
 						-drive if=none,id=stick,format=raw,file=${USBIMG} \
-						-global driver=cfi.pflash01,property=secure,value=on \
 						-drive if=pflash,unit=0,format=raw,file=${CODEX64},readonly=on \
 						-drive if=pflash,unit=1,format=raw,file=${VARSX64} \
-						-drive file=${ZEROIMG},format=raw,if=none,id=hd0 \
+						-drive file=${DISKIMG},format=raw,if=none,id=hd0 \
 						-device nvme,bus=pci20,serial=deadbeef,drive=hd0 \
 						-chardev socket,id=chrtpm,path=/tmp/tpm/swtpm-sock \
 						-tpmdev emulator,id=tpm0,chardev=chrtpm \
@@ -101,13 +117,19 @@ help:
 all: init qemu edk2
 
 .PHONY: init
-init: dirs
+init: dirs images
 	$(MAKE) -C ${REPO}/edk2/BaseTools
-	@dd if=/dev/zero of=${ZEROIMG} bs=32M count=1
-	@dd if=/dev/zero of=${USBIMG} bs=32M count=1
-	@if ! test -d ${VENV_PATH}; then ${PYTHON} -m venv ${VENV_PATH}; fi
-	@source ${VENV_PATH}/bin/activate
-	@pip install setuptools PyYAML cryptography ${REPO}/ovmfvartool
+	if ! test -d ${VENV_PATH}; then ${PYTHON} -m venv ${VENV_PATH}; fi
+	source ${VENV_PATH}/bin/activate
+	pip install setuptools PyYAML cryptography ${REPO}/ovmfvartool
+
+.PHONY: images
+images:
+	dd if=/dev/zero of=${ZEROIMG} bs=32M count=2 status=progress
+	dd if=/dev/zero of=${USBIMG} bs=32M count=1 status=progress
+	dd if=/dev/zero of=${KEYSIMG} bs=32M count=2 status=progress
+	sgdisk -Z ${KEYSIMG}
+	sgdisk -n 1:0:0 -t 1:ef00 ${KEYSIMG}
 
 .PHONY: qemu
 qemu: qemu-config
@@ -115,38 +137,81 @@ qemu: qemu-config
 
 .PHONY: edk2
 edk2: generate_keys
-	@export WORKSPACE=${REPO}/edk2
-	@export GCC5_BIN=${GCC5_X64_PREFIX}
-	@source ${REPO}/edk2/edksetup.sh
-	@cd ${REPO}/edk2
-	@build -p OvmfPkg/OvmfPkgX64.dsc -t GCC5 -a X64 -b DEBUG -Y COMPILE_INFO -y ${REPO}/logs/OvmfPkgX64.log -DSECURE_BOOT_ENABLE=TRUE -DLIBSPDM_ENABLE=TRUE -DSMM_REQUIRE=TRUE
+	export WORKSPACE=${REPO}/edk2
+	export GCC5_BIN=${GCC5_X64_PREFIX}
+	source ${REPO}/edk2/edksetup.sh
+	cd ${REPO}/edk2
+	build -p OvmfPkg/OvmfPkgX64.dsc -t GCC5 -a X64 -b DEBUG -Y COMPILE_INFO -y ${REPO}/logs/OvmfPkgX64.log -DSECURE_BOOT_ENABLE=TRUE -DLIBSPDM_ENABLE=TRUE -DSMM_REQUIRE=TRUE
 
 .PHONY: generate_keys
 generate_keys:
-	$(CC) -O3 -g -Wall -lgnutls ${REPO}/scripts/generate_keys.c -o ${REPO}/scripts/generate_keys
-	@cd ${REPO}
-	@${REPO}/scripts/generate_keys
+	$(CC) -O3 -g -Wall $(shell pkg-config --cflags gnutls) ${REPO}/scripts/generate_keys.c -o ${REPO}/scripts/generate_keys $(shell pkg-config --libs gnutls)
+	cd ${REPO}
+	${REPO}/scripts/generate_keys
+
+.PHONY: enroll-setup
+enroll-setup: images vars keys
+	$(eval LOOP := $(shell sudo losetup -fP --show ${KEYSIMG}))
+	sudo mkfs.fat -F 32 -n EFI ${LOOP}p1
+	sudo mount ${LOOP}p1 /mnt/efi
+	sudo cp ${KEYS}/PK.* /mnt/efi
+	sudo cp ${KEYS}/KEK.* /mnt/efi
+	sudo cp ${KEYS}/DB.* /mnt/efi
+	sudo chmod 644 /mnt/efi/PK.*
+	sudo chmod 644 /mnt/efi/KEK.*
+	sudo chmod 644 /mnt/efi/DB.*
+	sudo umount /mnt/efi
+	sudo losetup -D ${LOOP}
+
+.PHONY: grub
+grub: vars
+	cd ${GRUB}
+	$(eval LOOP := $(shell sudo losetup -fP --show ${DISKIMG}))
+	sudo mount ${LOOP}p1 /mnt/efi
+	sudo mount ${LOOP}p2 /mnt/drive
+	TARGET_CC=${GCC5_X64_PREFIX}gcc ./configure --target=x86_64 --with-platform=efi --disable-werror
+	$(MAKE)
+	sudo TARGET_CC=${GCC5_X64_PREFIX}gcc ./grub-install \
+		--target=x86_64-efi \
+		--directory=grub-core \
+		--efi-directory=/mnt/efi/ \
+		--bootloader-id=GRUB \
+		--modules="normal part_msdos part_gpt multiboot" \
+		--root-directory=/mnt/drive/ \
+		--no-floppy ${LOOP}
+	sudo sbsign --key ${KEYS}/DB.key --cert ${KEYS}/DB.crt --output /mnt/efi/EFI/BOOT/BOOTX64.EFI /mnt/efi/EFI/GRUB/grubx64.efi
+	sudo umount /mnt/efi /mnt/drive
+	sudo losetup -D ${LOOP}
+
+.PHONY: buildroot
+buildroot: vars
+	$(eval LOOP := $(shell sudo losetup -fP --show ${DISKIMG}))
+	sudo mount ${LOOP}p1 /mnt/efi
+	sudo mount ${LOOP}p2 /mnt/drive
+	sudo sbsign --key ${KEYS}/DB.key --cert ${KEYS}/DB.crt --output /mnt/efi/EFI/BOOT/BOOTX64.EFI /mnt/efi/EFI/BOOT/orig.efi
+	sudo umount /mnt/efi /mnt/drive
+	sudo losetup -D ${LOOP}
 
 .PHONY: vars
 vars: generate_keys
-	@source ${VENV_PATH}/bin/activate
-	@python ${REPO}/scripts/generate_vars_yaml -w ${REPO}
-	@ovmfvartool compile ${REPO}/vars.yaml ${REPO}/ovmf_vars_custom.fd
+	source ${VENV_PATH}/bin/activate
+	python ${REPO}/scripts/generate_vars_yaml -w ${REPO}
+	ovmfvartool compile ${REPO}/vars.yaml ${REPO}/ovmf_vars_custom.fd
 
 .PHONY: run
-run: tpm vars
+run: tpm
 	$(QEMUX64) $(QFLAGSX64)
 
 .PHONY: run-cli
-run-cli: tpm vars
+run-cli: tpm
 	$(QEMUX64) $(QFLAGSX64) -nographic
 
 .PHONY: dbg
-dbg: tpm vars
+dbg: tpm
 	$(QEMUX64) $(QFLAGSX64) -nographic -s -S
 
 .PHONY: integrity
-integrity: tpm vars
+integrity: tpm
 	$(QEMUX64) $(QFLAGSX64)
 
 .PHONY: tpm
@@ -154,7 +219,7 @@ tpm: dirs
 	@$(TPMEMU)
 
 qemu-config: dirs
-	@cd ${REPO}/qemu/build
+	cd ${REPO}/qemu/build
 	../configure \
 		--target-list=x86_64-softmmu \
 		--disable-werror \
@@ -172,17 +237,21 @@ qemu-config: dirs
 # -nodes: No DES encryption
 .PHONY: keys
 keys: dirs
-	openssl req -nodes -new -x509 -newkey rsa:2048 -keyout ${REPO}/keys/PK.key -out ${REPO}/keys/PK.crt -days 365 -subj "/CN=UEFI SPDM" -sha256
-	openssl x509 -in ${REPO}/keys/PK.crt -out ${REPO}/keys/PK.cer -outform DER
-	openssl req -nodes -new -x509 -newkey rsa:2048 -keyout ${REPO}/keys/KEK.key -out ${REPO}/keys/KEK.crt -days 365 -subj "/CN=UEFI SPDM" -sha256
-	openssl x509 -in ${REPO}/keys/KEK.crt -out ${REPO}/keys/KEK.cer -outform DER
+	# for k in PK KEK; do \
+	# done
+	openssl req -newkey rsa:2048 -nodes -keyout ${KEYS}/TEST_PK.key -new -x509 -sha256 -days 365 -subj "/CN=SPDM" -out ${KEYS}/TEST_PK.pem
+	openssl req -new -newkey rsa:2048 -nodes -outform PEM -keyout ${KEYS}/TEST_KEK.key -out ${KEYS}/TEST_KEK.csr
+	openssl x509 -req -in ${KEYS}/TEST_KEK.csr -days 365 -CA ${KEYS}/TEST_PK.pem -CAkey ${KEYS}/TEST_PK.key -CAcreateserial -out ${KEYS}/TEST_KEK.pem
+	for k in PK KEK; do \
+		openssl x509 -inform PEM -in ${KEYS}/TEST_$$k.pem -outform DER -out ${KEYS}/TEST_$$k.der
+	done
 
 .PHONY: dirs
 dirs:
 	$(MKDIR) ${REPO}/logs/
 	$(MKDIR) ${REPO}/qemu/build
 	$(MKDIR) ${REPO}/images
-	$(MKDIR) ${REPO}/keys
+	$(MKDIR) ${KEYS}
 	$(MKDIR) /tmp/tpm
 
 .PHONY: clean
