@@ -2,9 +2,10 @@
 
 import yaml
 import argparse
+import uuid
+from datetime import datetime
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes
-
 
 parser = argparse.ArgumentParser(
             prog="generate_vars_yaml",
@@ -18,17 +19,21 @@ args = parser.parse_args()
 workdir = args.workspace
 yaml_file = f"{workdir}/vars.yaml"
 ovmf_vars = {"Variables": dict()}
+timestamp = datetime.now()
 
 # Sizes
 efi_signature_list_size = 0x1c
 efi_guid_size = 0x10
+repeating_header_size = 0x2c
 
-# EFI GUIDs
+# EFI GUIDs with little endianness
 gEfiGlobalVariableGuid = "61dfe48b-ca93-d211-aa0d-00e098032b8c"
 gEfiDeviceSecurityConfig = "6caa6167-bf41-384a-8493-266b119844fc"
 gEfiDeviceSignatureDatabaseGuid = "f4b4c2b9-5fbf-2d46-8adf-c5c70ac35dad"
-gEfiCertx509Guid = "a159c0a5-e494-a74a-87b5-ab155c2bf072"  # Little endian
-gEfiCallerIdGuid = "f94d7773-dcba-1146-aa41-b12ae468b27c"  # Little endian
+gEfiCertx509Guid = "a159c0a5-e494-a74a-87b5-ab155c2bf072"
+gEfiCallerIdGuid = "f94d7773-dcba-1146-aa41-b12ae468b27c"
+gEfiImageSecurityDatabaseGuid = "cbb219d7-3a3d-9645-a3bc-dad00e67656f"
+SecureBootGuid = "c70ba3f0-08af-5645-99c4-001009c93a44"
 
 #
 # SPDM UEFI variables
@@ -124,7 +129,92 @@ ovmf_vars["Variables"][gEfiDeviceSignatureDatabaseGuid].update(sign_dict)
 # Secure Boot Keys
 #
 # PK: Platform Key
-# pk = open(f"{workdir}/keys/PK.cer", "rb").read()
+ovmf_vars["Variables"].update({ gEfiGlobalVariableGuid: dict() })
+
+with open(f"{workdir}/keys/PK.der", "rb") as f:
+    pk_der = f.read()
+
+signature_type = bytes.fromhex(gEfiCertx509Guid.replace('-', ''))
+signature_owner = bytes.fromhex(gEfiGlobalVariableGuid.replace('-', ''))
+
+pk_var = signature_type + \
+         (len(pk_der) + repeating_header_size).to_bytes(4, 'little') + \
+         bytes(4) + \
+         (len(signature_owner) + len(pk_der)).to_bytes(4, 'little') + \
+         signature_owner + \
+         pk_der
+
+pk_dict = {
+    "PK": {
+        "Boot Access": True,
+        "Runtime Access": True,
+        "Time Based Authenticated Write Access": True,
+        "Timestamp": timestamp,
+        "Data": pk_var
+    }
+}
+
+ovmf_vars["Variables"].update({ gEfiGlobalVariableGuid: pk_dict })
+
+# KEK: Key Exchange Key
+with open(f"{workdir}/keys/KEK.der", "rb") as f:
+    kek_der = f.read()
+
+signature_type = bytes.fromhex(gEfiCertx509Guid.replace("-", ""))
+signature_owner = bytes.fromhex(str(uuid.uuid4()).replace("-", ""))
+
+kek_var = signature_type + \
+          (len(kek_der) + repeating_header_size).to_bytes(4, "little") + \
+          bytes(4) + \
+          (len(signature_owner) + len(kek_der)).to_bytes(4, "little") + \
+          signature_owner + \
+          kek_der
+
+kek_dict = {
+    "KEK": {
+        "Boot Access": True,
+        "Runtime Access": True,
+        "Time Based Authenticated Write Access": True,
+        "Timestamp": timestamp,
+        "Data": kek_var
+    }
+}
+
+ovmf_vars["Variables"][gEfiGlobalVariableGuid].update(kek_dict)
+
+# DB
+with open(f"{workdir}/keys/DB.der", "rb") as f:
+    db_der = f.read()
+
+db_var = signature_type + \
+         (len(db_der) + repeating_header_size).to_bytes(4, "little") + \
+         bytes(4) + \
+         (len(signature_owner) + len(db_der)).to_bytes(4, "little") + \
+         signature_owner + \
+         db_der
+
+db_dict = {
+    "db": {
+        "Boot Access": True,
+        "Runtime Access": True,
+        "Time Based Authenticated Write Access": True,
+        "Timestamp": timestamp,
+        "Data": db_var
+    }
+}
+ovmf_vars["Variables"].update({ gEfiImageSecurityDatabaseGuid: db_dict })
+
+#
+# Secure Boot Enable
+#
+secure_boot_dict = {
+    "SecureBootEnable": {
+        "Boot Access": True,
+        "Data": (0x1).to_bytes(1)
+    }
+
+}
+ovmf_vars["Variables"].update({ SecureBootGuid: secure_boot_dict })
 
 with open(yaml_file, "w") as f:
     yaml.dump(ovmf_vars, f, default_flow_style=False, sort_keys=False)
