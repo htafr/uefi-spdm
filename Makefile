@@ -1,16 +1,6 @@
 .ONESHELL:
 SHELL := /usr/bin/bash
 
-# $(eval GUID := $(shell uuidgen))
-# openssl req -x509 -new -nodes -sha256 -subj "/CN=LARC/" -key ${KEYS}/PK.key -outform PEM -out ${KEYS}/PK.pem -days 365
-# sed \
-# 	-e "s/^-----BEGIN CERTIFICATE-----$$/${GUID}:/" \
-# 	-e "/^-----END CERTIFICATE-----$$/d" \
-# 	${KEYS}/PK.pem \
-# 	| tr -d '\n' >${KEYS}/PK.oemstr
-# openssl x509 -in ${KEYS}/PK.pem -inform PEM -out ${KEYS}/PK.cer -outform DER
-# sbsiglist --owner ${GUID} --type x509 --output ${KEYS}/PK.esl ${KEYS}/PK.cer
-# sbvarsign --key ${KEYS}/PK.key --cert ${KEYS}/PK.pem --output ${KEYS}/PK.auth ${KEYS}/PK ${KEYS}/PK.esl
 REPO ?= $(shell pwd)
 KEYS = ${REPO}/keys
 GRUB = ${REPO}/../grub
@@ -18,15 +8,15 @@ LINUX = ${REPO}/../linux
 
 ifeq ($(shell uname -m), arm64)
 TOOLCHAIN ?= AARCH64_GCC
-GCC5_X64_PREFIX ?= x86_64-linux-gnu-
+GCC5_X64_PREFIX ?= GCC5_X64_PREFIX
 LDFLAGS ?= "-L/lib/aarch64-linux-gnu -L/usr/lib"
 else ifeq ($(shell uname -m), aarch64)
 TOOLCHAIN ?= AARCH64_GCC
-GCC5_X64_PREFIX ?= x86_64-linux-gnu-
+GCC5_X64_PREFIX ?= GCC5_X64_PREFIX
 LDFLAGS ?= "-L/lib/aarch64-linux-gnu -L/usr/lib"
 else ifeq ($(shell uname -m), x86_64)
 TOOLCHAIN ?= GCC
-GCC5_X64_PREFIX ?= gcc
+GCC5_X64_PREFIX ?=
 LDFLAGS ?= ""
 endif
 
@@ -39,20 +29,19 @@ CC = gcc
 PKG_CONFIG_PATH ?= "/usr/lib/pkgconfig:${REPO}/libtpms/build/lib64/pkgconfig"
 CFLAGS ?= "-I${REPO}/libtpms/include"
 VENV_PATH ?= ${REPO}/.spdm-venv
+BUILD ?= RELEASE
 
-CODEX64 = ${REPO}/edk2/Build/OvmfX64/DEBUG_GCC5/FV/OVMF_CODE.fd
-# VARSX64 = ${REPO}/edk2/Build/OvmfX64/DEBUG_GCC5/FV/OVMF_VARS_INTEGRITY.fd
-# VARSX64 = ${REPO}/ovmf_vars_spdm.fd
+CODEX64 = ${REPO}/edk2/Build/OvmfX64/${BUILD}_GCC5/FV/OVMF_CODE.fd
 VARSX64 = ${REPO}/ovmf_vars_custom.fd
-# VARSX64 = ${REPO}/vars.fd
 
 ZEROIMG = ${REPO}/images/zero.img
 DISKIMG = ${REPO}/images/disk.img
-# DISKIMG = ${REPO}/../linux/disk.img
 KEYSIMG = ${REPO}/images/keys.img
 USBIMG = ${REPO}/images/usb.img
 
-# -global driver=cfi.pflash01,property=secure,value=on
+						# -d plugin \
+						# -plugin /home/htafr/Git/uefi-spdm/qemu/build/tests/tcg/plugins/libinsn.so \
+						# -D /home/htafr/Git/uefi-spdm/logs/instructions.log
 QFLAGSX64 = -M q35,smm=on -smp 4 -m 1G -nodefaults -bios none \
 						-chardev stdio,mux=on,id=char0 \
 						-serial chardev:char0 \
@@ -86,9 +75,8 @@ QFLAGSX64 = -M q35,smm=on -smp 4 -m 1G -nodefaults -bios none \
 						-device tpm-tis,tpmdev=tpm0
 
 TPMEMU = $(SWTPM) socket --tpm2 -d \
-				 --tpmstate dir=/tmp/tpm,mode=0600,lock \
-				 --ctrl type=unixio,path=/tmp/tpm/swtpm-sock,mode=0600,terminate \
-				 --flags disable-auto-shutdown \
+				 --tpmstate dir=/tmp/tpm,mode=0600 \
+				 --ctrl type=unixio,path=/tmp/tpm/swtpm-sock,mode=0600 \
 				 --log level=20,file=${REPO}/logs/tpm.log
 
 .PHONY: help
@@ -116,7 +104,7 @@ help:
 	@echo 
 
 .PHONY: all
-all: init qemu edk2
+all: init qemu edk2 busybox linux
 
 .PHONY: init
 init: dirs images
@@ -155,68 +143,18 @@ qemu: qemu-config
 	$(MAKE) -C ${REPO}/qemu/build
 
 .PHONY: edk2
-edk2: generate_keys
+edk2:
 	export WORKSPACE=${REPO}/edk2
 	export GCC5_BIN=${GCC5_X64_PREFIX}
 	source ${REPO}/edk2/edksetup.sh
 	cd ${REPO}/edk2
-	build -p OvmfPkg/OvmfPkgX64.dsc -t GCC5 -a X64 -b DEBUG -Y COMPILE_INFO -y ${REPO}/logs/OvmfPkgX64.log -DSECURE_BOOT_ENABLE=TRUE -DLIBSPDM_ENABLE=TRUE -DSMM_REQUIRE=TRUE
+	build -p OvmfPkg/OvmfPkgX64.dsc -t GCC5 -a X64 -b ${BUILD} -Y COMPILE_INFO -y ${REPO}/logs/OvmfPkgX64.log -DSECURE_BOOT_ENABLE=TRUE -DLIBSPDM_ENABLE=TRUE -DSMM_REQUIRE=TRUE
 
 .PHONY: generate_keys
 generate_keys:
-	$(CC) -O3 -g -Wall $(shell pkg-config --cflags gnutls) ${REPO}/scripts/generate_keys.c -o ${REPO}/scripts/generate_keys $(shell pkg-config --libs gnutls)
+	$(CC) -O3 -g -Wall $(shell pkg-config --cflags gnutls) -D${BUILD} ${REPO}/scripts/generate_keys.c -o ${REPO}/scripts/generate_keys $(shell pkg-config --libs gnutls)
 	cd ${REPO}
 	${REPO}/scripts/generate_keys
-
-.PHONY: enroll-setup
-enroll-setup: dirs images vars
-	$(eval LOOP := $(shell sudo losetup -fP --show ${KEYSIMG}))
-	sudo mount ${LOOP}p1 /mnt/efi
-	sudo cp ${KEYS}/PK.* /mnt/efi
-	sudo cp ${KEYS}/KEK.* /mnt/efi
-	sudo cp ${KEYS}/DB.* /mnt/efi
-	sudo chmod 644 /mnt/efi/PK.*
-	sudo chmod 644 /mnt/efi/KEK.*
-	sudo chmod 644 /mnt/efi/DB.*
-	sudo umount /mnt/efi
-	sudo losetup -D ${LOOP}
-
-.PHONY: grub
-grub: vars
-	cd ${GRUB}
-	$(eval LOOP := $(shell sudo losetup -fP --show ${DISKIMG}))
-	sudo mount ${LOOP}p1 /mnt/efi
-	sudo mount ${LOOP}p2 /mnt/drive
-	TARGET_CC=${GCC5_X64_PREFIX}gcc ./configure --target=x86_64 --with-platform=efi --disable-werror
-	$(MAKE)
-	sudo TARGET_CC=${GCC5_X64_PREFIX}gcc ./grub-install \
-		--target=x86_64-efi \
-		--directory=grub-core \
-		--efi-directory=/mnt/efi/ \
-		--bootloader-id=GRUB \
-		--modules="normal part_msdos part_gpt multiboot" \
-		--root-directory=/mnt/drive/ \
-		--no-floppy ${LOOP}
-	sudo sbsign --key ${KEYS}/DB.key --cert ${KEYS}/DB.crt --output /mnt/efi/EFI/BOOT/BOOTX64.EFI /mnt/efi/EFI/GRUB/grubx64.efi
-	sudo umount /mnt/efi /mnt/drive
-	sudo losetup -D ${LOOP}
-
-# sudo sbsign --key ${KEYS}/DB.key --cert ${KEYS}/DB.crt --output /mnt/efi/EFI/BOOT/BOOTX64.EFI /mnt/efi/EFI/BOOT/orig.efi
-.PHONY: ext2
-ext2:
-	sudo mount -o loop ${REPO}/../buildroot/output/images/rootfs.ext2 /mnt/rootfs
-	sudo umount -d /mnt/rootfs
-
-.PHONY: buildroot
-buildroot: vars
-	$(eval LOOP := $(shell sudo losetup -fP --show ${DISKIMG}))
-	sudo mount -o loop ${REPO}/../buildroot/output/images/rootfs.ext2 /mnt/rootfs
-	sudo mount ${LOOP}p1 /mnt/efi
-	sudo mount ${LOOP}p2 /mnt/drive
-	sudo cp -r /mnt/rootfs/* /mnt/drive
-	sudo mkdir -p /mnt/efi/EFI/BOOT
-	sudo sbsign --key ${KEYS}/DB.key --cert ${KEYS}/DB.crt --output /mnt/efi/EFI/BOOT/BOOTX64.EFI ${REPO}/../buildroot/output/images/bzImage
-	sudo umount -d /mnt/rootfs /mnt/efi /mnt/drive
 
 .PHONY: rcS
 rcS:
@@ -229,9 +167,11 @@ rcS:
 
 		cat <<!
 
-		Boot took $(cut -d' ' -f1 /proc/uptime seconds)
+		Boot took \$$(cut -d' ' -f1 /proc/uptime seconds)
 
 		!
+
+		poweroff -f
 	EOF
 
 .PHONY: inittab
@@ -251,13 +191,13 @@ creds:
 etc: rcS inittab creds
 
 .PHONY: busybox
-busybox: disk etc
+busybox: disk etc dirs
 	$(eval LOOP := $(shell sudo losetup -fP --show ${DISKIMG}))
 	sudo mount ${LOOP}p2 ${REPO}/mnt/drive
-	cp ${REPO}/configs/busybox.config ${REPO}/busybox/.config
-	ARCH=x86_64 CROSS_COMPILE=x86_64-linux-gnu- $(MAKE) -C ${REPO}/busybox oldconfig
-	ARCH=x86_64 CROSS_COMPILE=x86_64-linux-gnu- $(MAKE) -C ${REPO}/busybox
-	sudo ARCH=x86_64 CROSS_COMPILE=x86_64-linux-gnu- $(MAKE) -C ${REPO}/busybox install
+	sed 's|CONFIG_PREFIX=.*|CONFIG_PREFIX="${REPO}/mnt/drive"|' ${REPO}/configs/busybox.config > ${REPO}/busybox/.config
+	ARCH=x86_64 CROSS_COMPILE=${GCC5_X64_PREFIX} $(MAKE) -C ${REPO}/busybox oldconfig
+	ARCH=x86_64 CROSS_COMPILE=${GCC5_X64_PREFIX} $(MAKE) -C ${REPO}/busybox
+	sudo ARCH=x86_64 CROSS_COMPILE=${GCC5_X64_PREFIX} $(MAKE) -C ${REPO}/busybox install
 	sudo mkdir -p ${REPO}/mnt/drive/{bin,sbin,etc/init.d,proc,sys,usr/{bin,sbin,lib},lib,dev,mnt,root,tmp,var/log}
 	sudo chmod +x ${REPO}/rcS
 	sudo mv ${REPO}/rcS ${REPO}/mnt/drive/etc/init.d
@@ -271,11 +211,11 @@ busybox: disk etc
 	sudo losetup -D ${LOOP}
 
 .PHONY: linux
-linux: vars
+linux: vars dirs
 	$(eval LOOP := $(shell sudo losetup -fP --show ${DISKIMG}))
 	cp ${REPO}/configs/linux.config ${REPO}/linux/.config
-	ARCH=x86_64 CROSS_COMPILE=x86_64-linux-gnu- $(MAKE) -C ${REPO}/linux oldconfig
-	ARCH=x86_64 CROSS_COMPILE=x86_64-linux-gnu- $(MAKE) -C ${REPO}/linux
+	ARCH=x86_64 CROSS_COMPILE=${GCC5_X64_PREFIX} $(MAKE) -C ${REPO}/linux oldconfig
+	ARCH=x86_64 CROSS_COMPILE=${GCC5_X64_PREFIX} $(MAKE) -C ${REPO}/linux
 	sudo mount ${LOOP}p1 ${REPO}/mnt/efi
 	sudo mkdir -p ${REPO}/mnt/efi/EFI/BOOT
 	sudo sbsign --key ${KEYS}/DB.key --cert ${KEYS}/DB.crt --output ${REPO}/mnt/efi/EFI/BOOT/BOOTX64.EFI ${REPO}/linux/arch/x86/boot/bzImage
@@ -291,6 +231,10 @@ vars: generate_keys
 .PHONY: run
 run: tpm
 	$(QEMUX64) $(QFLAGSX64)
+
+.PHONY: perf
+perf: tpm
+	sudo perf kvm stat --event duration_time,instructions,branch-instructions,branch-misses,cpu-cycles,cache-misses,cache-references,stalled-cycles-backend,stalled-cycles-frontend $(QEMUX64) $(QFLAGSX64) -enable-kvm -nographic
 
 .PHONY: run-cli
 run-cli: tpm
@@ -322,17 +266,9 @@ qemu-config: dirs
 		--enable-gtk \
 		--enable-system \
 		--enable-sdl \
-		--enable-slirp
-
-# -nodes: No DES encryption
-.PHONY: keys
-keys: dirs
-	openssl req -newkey rsa:2048 -nodes -keyout ${KEYS}/TEST_PK.key -new -x509 -sha256 -days 365 -subj "/CN=SPDM" -out ${KEYS}/TEST_PK.pem
-	openssl req -new -newkey rsa:2048 -nodes -outform PEM -keyout ${KEYS}/TEST_KEK.key -out ${KEYS}/TEST_KEK.csr
-	openssl x509 -req -in ${KEYS}/TEST_KEK.csr -days 365 -CA ${KEYS}/TEST_PK.pem -CAkey ${KEYS}/TEST_PK.key -CAcreateserial -out ${KEYS}/TEST_KEK.pem
-	for k in PK KEK; do \
-		openssl x509 -inform PEM -in ${KEYS}/TEST_$$k.pem -outform DER -out ${KEYS}/TEST_$$k.der
-	done
+		--enable-slirp \
+		--enable-plugins \
+		--enable-kvm
 
 .PHONY: dirs
 dirs:
@@ -341,9 +277,9 @@ dirs:
 	$(MKDIR) ${REPO}/images
 	$(MKDIR) ${KEYS}
 	$(MKDIR) /tmp/tpm
-	sudo $(MKDIR) /mnt/efi
-	sudo $(MKDIR) /mnt/drive
-	sudo $(MKDIR) /mnt/rootfs
+	$(MKDIR) ${REPO}/mnt/efi
+	$(MKDIR) ${REPO}/mnt/drive
+	$(MKDIR) ${REPO}/mnt/rootfs
 
 .PHONY: clean
 clean: clean-edk2 clean-qemu clean-images
