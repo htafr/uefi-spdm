@@ -8,11 +8,11 @@ LINUX = ${REPO}/../linux
 
 ifeq ($(shell uname -m), arm64)
 TOOLCHAIN ?= AARCH64_GCC
-GCC5_X64_PREFIX ?= GCC5_X64_PREFIX
+GCC5_X64_PREFIX ?= x86_64-linux-gnu-
 LDFLAGS ?= "-L/lib/aarch64-linux-gnu -L/usr/lib"
 else ifeq ($(shell uname -m), aarch64)
 TOOLCHAIN ?= AARCH64_GCC
-GCC5_X64_PREFIX ?= GCC5_X64_PREFIX
+GCC5_X64_PREFIX ?= x86_64-linux-gnu-
 LDFLAGS ?= "-L/lib/aarch64-linux-gnu -L/usr/lib"
 else ifeq ($(shell uname -m), x86_64)
 TOOLCHAIN ?= GCC
@@ -29,7 +29,7 @@ CC = gcc
 PKG_CONFIG_PATH ?= "/usr/lib/pkgconfig:${REPO}/libtpms/build/lib64/pkgconfig"
 CFLAGS ?= "-I${REPO}/libtpms/include"
 VENV_PATH ?= ${REPO}/.spdm-venv
-BUILD ?= RELEASE
+BUILD ?= DEBUG
 
 CODEX64 = ${REPO}/edk2/Build/OvmfX64/${BUILD}_GCC5/FV/OVMF_CODE.fd
 VARSX64 = ${REPO}/ovmf_vars_custom.fd
@@ -45,31 +45,34 @@ USBIMG = ${REPO}/images/usb.img
 QFLAGSX64 = -M q35,smm=on -smp 4 -m 1G -nodefaults -bios none \
 						-chardev stdio,mux=on,id=char0 \
 						-serial chardev:char0 \
-						-parallel chardev:char0 \
-						-device pcie-root-port,id=pci20,bus=pcie.0,chassis=1,addr=2.0,multifunction=on,pref64-reserve=32M \
-						-device pcie-root-port,id=pci21,bus=pcie.0,chassis=2,addr=2.1 \
-						-device pcie-root-port,id=pci22,bus=pcie.0,chassis=3,addr=2.2 \
-						-device pcie-root-port,id=pci23,bus=pcie.0,chassis=4,addr=2.3 \
-						-device pcie-root-port,id=pci30,bus=pcie.0,chassis=31,addr=3.0,multifunction=on,pref64-reserve=32M \
-						-device pcie-root-port,id=pci31,bus=pcie.0,chassis=32,addr=3.1 \
-						-device virtio-serial-pci,bus=pci21 \
+						-mon chardev=char0,mode=readline \
+						-device pcie-root-port,id=rp10,bus=pcie.0,addr=1.0,chassis=1,multifunction=on \
+						-device pcie-root-port,id=rp11,bus=pcie.0,addr=1.1,chassis=2 \
+						-device pcie-root-port,id=rp12,bus=pcie.0,addr=1.2,chassis=3 \
+						-device pcie-root-port,id=rp13,bus=pcie.0,addr=1.3,chassis=4 \
+						-device pcie-root-port,id=rp14,bus=pcie.0,addr=1.4,chassis=5 \
+						-device pcie-root-port,id=rp15,bus=pcie.0,addr=1.5,chassis=6 \
+						-device pcie-root-port,id=rp16,bus=pcie.0,addr=1.6,chassis=7 \
+						-device virtio-serial-pci,bus=rp10 \
 						-device virtconsole,chardev=char0,name=console.0 \
 						-device isa-debugcon,iobase=0x402,chardev=char0 \
 						-object rng-random,filename=/dev/urandom,id=rng0 \
-						-device virtio-rng-pci,bus=pci22,rng=rng0 \
-						-device virtio-gpu-pci,bus=pci23 \
-						-device e1000e,netdev=net0,bus=pci30 -netdev user,id=net0,hostfwd=tcp::5555-:22 \
+						-device virtio-rng-pci,bus=rp11,rng=rng0 \
+						-device virtio-gpu-pci,bus=rp12 \
+						-device e1000e,netdev=net0,bus=rp13 \
+						-netdev user,id=net0,hostfwd=tcp::5555-:22 \
 						-usb \
-						-device qemu-xhci,id=xhci \
+						-device qemu-xhci,id=xhci,bus=rp14 \
 						-device usb-storage,bus=xhci.0,drive=stick,removable=on \
 						-device usb-kbd,bus=xhci.0 \
 						-device usb-mouse,bus=xhci.0 \
+						-device usb-ccid,bus=xhci.0 \
 						-drive if=none,id=stick,format=raw,file=${USBIMG} \
 						-global driver=cfi.pflash01,property=secure,value=on \
 						-drive if=pflash,unit=0,format=raw,file=${CODEX64},readonly=on \
 						-drive if=pflash,unit=1,format=raw,file=${VARSX64} \
 						-drive file=${DISKIMG},format=raw,if=none,id=hd0 \
-						-device nvme,bus=pci20,serial=deadbeef,drive=hd0 \
+						-device nvme,bus=rp16,serial=deadbeef,drive=hd0 \
 						-chardev socket,id=chrtpm,path=/tmp/tpm/swtpm-sock \
 						-tpmdev emulator,id=tpm0,chardev=chrtpm \
 						-device tpm-tis,tpmdev=tpm0
@@ -161,17 +164,16 @@ rcS:
 	sudo cat <<EOF > ${REPO}/rcS
 		#!/bin/sh
 
-		mount -t devtmpfs none /dev
-		mount -t proc none /proc
-		mount -t sysfs none /sys
+		mount -t devtmpfs devtmpfs /dev
+		mount -t proc proc /proc
+		mount -t sysfs sysfs /sys
 
 		cat <<!
 
 		Boot took \$$(cut -d' ' -f1 /proc/uptime seconds)
 
 		!
-
-		poweroff -f
+		lshw -short
 	EOF
 
 .PHONY: inittab
@@ -185,7 +187,7 @@ inittab:
 .PHONY: creds
 creds:
 	sudo echo "root:x:0:0:root:/:/bin/sh" > passwd
-	sudo echo "root:$(openssl passwd -noverify root):0::::::" > shadow
+	sudo echo "root:$$(openssl passwd -5 -noverify root):0::::::" > shadow
 
 .PHONY: etc
 etc: rcS inittab creds
