@@ -91,23 +91,44 @@ help:
 	@echo "    all             initialize repo, build qemu and edk2"
 	@echo "    init            initialize git submodules, compile BaseTools,"
 	@echo "                    create disk images, and create virtual environment"
-	@echo "    qemu            configure and build qemu"
-	@echo "    qemu-config     configure qemu"
+	@echo "    qemu            build qemu"
+	@echo "        qemu-config     configure qemu"
 	@echo "    edk2            build OVMF firmware"
-	@echo "    generate_keys   generate platform keys using GnuTLS"
+	@echo "    vars            create custom OVMF VARS"
+	@echo "        generate_keys   generate platform keys using GnuTLS"
+	@echo "    disk            create partitions in the generated image for linux"
+	@echo "        images          generate images for the emulation"
+	@echo "    busybox         build busybox"
+	@echo "        etc             create etc/ directory"
+	@echo "            rcS             create rcS file"
+	@echo "            inittab         create inittab file"
+	@echo "            creds           create passwords file"
+	@echo "    linux           build linux"
 	@echo "    run             run emulation"
+	@echo "    perf            run emulation with perf KVM"
 	@echo "    run-cli         run emulation without GUI"
 	@echo "    dbg             run emulation to attach to a gdb instance"
-	@echo "    integrity       run emulation with wrong supplied firmware hash"
 	@echo "    tpm             run TPM emulation"
 	@echo "    dirs            create logs/, qemu/build/, images/, keys/, /tmp/tpm"
 	@echo "    clean           clean build"
-	@echo "    clean-edk2      clean EDKII build"
-	@echo "    clean-qemu      clean QEMU build"
+	@echo "        clean-edk2      clean EDKII build"
+	@echo "        clean-qemu      clean QEMU build"
+	@echo "        clean-images    clean created images"
 	@echo 
 
 .PHONY: all
 all: init qemu edk2 busybox linux
+
+.PHONY: dirs
+dirs:
+	$(MKDIR) ${REPO}/logs/
+	$(MKDIR) ${REPO}/qemu/build
+	$(MKDIR) ${REPO}/images
+	$(MKDIR) ${KEYS}
+	$(MKDIR) /tmp/tpm
+	$(MKDIR) ${REPO}/mnt/efi
+	$(MKDIR) ${REPO}/mnt/drive
+	$(MKDIR) ${REPO}/mnt/rootfs
 
 .PHONY: init
 init: dirs images
@@ -132,15 +153,6 @@ disk: images
 	sudo mkfs.ext4 ${LOOP}p2
 	sudo losetup -D ${LOOP}
 
-.PHONY: keys_img
-keys_img:
-	dd if=/dev/zero of=${KEYSIMG} bs=32M count=2 status=progress
-	sgdisk -Z ${KEYSIMG}
-	sgdisk -n 1:0:0 -t 1:ef00 ${KEYSIMG}
-	sudo losetup ${LOOP} -P ${KEYSIMG}
-	sudo mkfs.fat -F 32 -n EFI ${LOOP}p1
-	sudo losetup -D ${LOOP}
-
 .PHONY: qemu
 qemu: qemu-config
 	$(MAKE) -C ${REPO}/qemu/build
@@ -152,12 +164,6 @@ edk2:
 	source ${REPO}/edk2/edksetup.sh
 	cd ${REPO}/edk2
 	build -p OvmfPkg/OvmfPkgX64.dsc -t GCC5 -a X64 -b ${BUILD} -Y COMPILE_INFO -y ${REPO}/logs/OvmfPkgX64.log -DSECURE_BOOT_ENABLE=TRUE -DLIBSPDM_ENABLE=TRUE -DSMM_REQUIRE=TRUE
-
-.PHONY: generate_keys
-generate_keys:
-	$(CC) -O3 -g -Wall $(shell pkg-config --cflags gnutls) -D${BUILD} ${REPO}/scripts/generate_keys.c -o ${REPO}/scripts/generate_keys $(shell pkg-config --libs gnutls)
-	cd ${REPO}
-	${REPO}/scripts/generate_keys
 
 .PHONY: rcS
 rcS:
@@ -224,6 +230,12 @@ linux: vars dirs
 	sudo umount -d ${REPO}/mnt/efi
 	sudo losetup -D ${LOOP}
 
+.PHONY: generate_keys
+generate_keys:
+	$(CC) -O3 -g -Wall $(shell pkg-config --cflags gnutls) -D${BUILD} ${REPO}/scripts/generate_keys.c -o ${REPO}/scripts/generate_keys $(shell pkg-config --libs gnutls)
+	cd ${REPO}
+	${REPO}/scripts/generate_keys
+
 .PHONY: vars
 vars: generate_keys
 	source ${VENV_PATH}/bin/activate
@@ -246,10 +258,6 @@ run-cli: tpm
 dbg: tpm
 	$(QEMUX64) $(QFLAGSX64) -nographic -s -S
 
-.PHONY: integrity
-integrity: tpm
-	$(QEMUX64) $(QFLAGSX64)
-
 .PHONY: tpm
 tpm: dirs
 	@$(TPMEMU)
@@ -271,17 +279,6 @@ qemu-config: dirs
 		--enable-slirp \
 		--enable-plugins \
 		--enable-kvm
-
-.PHONY: dirs
-dirs:
-	$(MKDIR) ${REPO}/logs/
-	$(MKDIR) ${REPO}/qemu/build
-	$(MKDIR) ${REPO}/images
-	$(MKDIR) ${KEYS}
-	$(MKDIR) /tmp/tpm
-	$(MKDIR) ${REPO}/mnt/efi
-	$(MKDIR) ${REPO}/mnt/drive
-	$(MKDIR) ${REPO}/mnt/rootfs
 
 .PHONY: clean
 clean: clean-edk2 clean-qemu clean-images
